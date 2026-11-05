@@ -18,6 +18,8 @@ if not DATABASE_URI:
 # Configure SQLAlchemy
 SQLALCHEMY_DATABASE_URI = DATABASE_URI
 SQLALCHEMY_TRACK_MODIFICATIONS = False
+FORCE_HTTPS = os.getenv("FORCE_HTTPS", "true").lower() == "true"
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 
 # Secret for session management
 SECRET_KEY = os.getenv("SECRET_KEY", "s3cr3t-key-shhhh")

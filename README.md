@@ -1,4 +1,19 @@
-# DevOps Capstone Template
+# DevOps Capstone Project
+
+[![CI Build](https://github.com/gojosatorukz/devops-capstone-project/actions/workflows/ci-build.yaml/badge.svg)](https://github.com/gojosatorukz/devops-capstone-project/actions/workflows/ci-build.yaml)
+
+The Customer Accounts service provides a JSON API at `/accounts`. GitHub Actions runs lint, tests, and the coverage check on pushes and pull requests to `main`.
+
+| Method | Path | Success |
+| --- | --- | --- |
+| GET | `/health` | 200 with a status payload |
+| GET | `/accounts` | 200 with the account list |
+| POST | `/accounts` | 201 with the account and its Location |
+| GET | `/accounts/{id}` | 200 with the account |
+| PUT | `/accounts/{id}` | 200 with the updated account |
+| DELETE | `/accounts/{id}` | 204 |
+
+The OpenShift manifests use the `postgresql` Secret for the database connection. Replace the placeholder container image with the image built in your registry before applying the deployment. The route terminates HTTPS at the OpenShift router.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.9](https://img.shields.io/badge/Python-3.9-green.svg)](https://shields.io/)
