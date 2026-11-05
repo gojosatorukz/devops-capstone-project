@@ -42,6 +42,11 @@ spec:
       runAfter: [clone]
       taskRef:
         name: flake8
+      params:
+        - name: requirements_file
+          value: ""
+        - name: args
+          value: ["--max-line-length=127", "--max-complexity=10"]
       workspaces:
         - name: source
           workspace: pipeline-workspace
