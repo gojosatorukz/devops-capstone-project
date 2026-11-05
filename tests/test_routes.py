@@ -8,7 +8,9 @@ Test cases can be run with the following:
 import os
 import logging
 from unittest import TestCase
+from unittest.mock import patch
 from tests.factories import AccountFactory
+from service import talisman
 from service.common import status  # HTTP Status Codes
 from service.models import db, Account, init_db
 from service.routes import app
@@ -33,6 +35,7 @@ class TestAccountService(TestCase):
         app.config["DEBUG"] = False
         app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URI
         app.logger.setLevel(logging.CRITICAL)
+        talisman.force_https = False
         init_db(app)
 
     @classmethod
@@ -86,6 +89,22 @@ class TestAccountService(TestCase):
         data = resp.get_json()
         self.assertEqual(data["status"], "OK")
 
+    def test_security_headers_and_cors(self):
+        """Send browser headers and allow only configured cross-origin clients."""
+        with patch.dict(app.config, {"TESTING": False}):
+            allowed = self.client.get("/", headers={"Origin": app.config["CORS_ORIGINS"][0]})
+            denied = self.client.get("/", headers={"Origin": "https://untrusted.invalid"})
+        self.assertEqual(allowed.headers["X-Frame-Options"], "SAMEORIGIN")
+        self.assertEqual(allowed.headers["Access-Control-Allow-Origin"], app.config["CORS_ORIGINS"][0])
+        self.assertNotIn("Access-Control-Allow-Origin", denied.headers)
+
+    def test_insecure_production_request_redirects(self):
+        """Redirect plain HTTP to HTTPS when enforcement is enabled."""
+        with patch.object(talisman, "force_https", True):
+            response = self.client.get("/")
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.headers["Location"].startswith("https://"))
+
     def test_create_account(self):
         """It should Create a new Account"""
         account = AccountFactory()
@@ -123,4 +142,70 @@ class TestAccountService(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
 
-    # ADD YOUR TEST CASES HERE ...
+    def test_list_accounts(self):
+        """List every account and optionally filter by exact name."""
+        first, second = self._create_accounts(2)
+        response = self.client.get(BASE_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertCountEqual([row["id"] for row in response.json], [first.id, second.id])
+
+        response = self.client.get(BASE_URL, query_string={"name": first.name})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([row["id"] for row in response.json], [first.id])
+
+    def test_read_account(self):
+        """A created account is available at its canonical URL."""
+        response = self.client.post(BASE_URL, json=AccountFactory().serialize())
+        account = response.get_json()
+        self.assertTrue(response.headers["Location"].endswith(f"/accounts/{account['id']}"))
+
+        response = self.client.get(f"{BASE_URL}/{account['id']}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.get_json(), account)
+
+    def test_read_missing_account(self):
+        """An absent account produces a structured 404 response."""
+        response = self.client.get(f"{BASE_URL}/0")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn("message", response.get_json())
+
+    def test_update_account(self):
+        """Replace account fields while preserving the URL and identifier."""
+        account = self._create_accounts(1)[0]
+        payload = account.serialize()
+        payload.update(id=0, name="Updated customer", phone_number=None)
+        url = f"{BASE_URL}/{account.id}"
+
+        response = self.client.put(url, json=payload)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.get_json(), {**payload, "id": account.id})
+        self.assertEqual(self.client.get(url).get_json(), response.get_json())
+
+    def test_update_missing_account(self):
+        """Updating an absent account does not create one."""
+        response = self.client.put(f"{BASE_URL}/0", json=AccountFactory().serialize())
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_delete_account(self):
+        """Delete the account and allow repeated deletion."""
+        account = self._create_accounts(1)[0]
+        url = f"{BASE_URL}/{account.id}"
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(response.data, b"")
+        self.assertEqual(self.client.get(url).status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(self.client.delete(url).status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_method_not_allowed(self):
+        """An unsupported verb returns a JSON client error."""
+        response = self.client.patch(BASE_URL)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        self.assertEqual(response.get_json()["status"], status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_backend_failure(self):
+        """An unexpected data-store failure returns a generic JSON error."""
+        with patch.object(Account, "all", side_effect=RuntimeError("backend unavailable")):
+            with patch.dict(app.config, {"PROPAGATE_EXCEPTIONS": False}):
+                response = self.client.get(BASE_URL)
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertNotIn("backend unavailable", response.get_data(as_text=True))
